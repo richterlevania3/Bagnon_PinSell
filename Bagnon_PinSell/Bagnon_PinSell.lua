@@ -305,28 +305,67 @@ local function onAltRightClick(item)
 	scheduleEnforce()
 end
 
-local function hookClicks(item)
+-- Taint-safe click capture: we never touch the slot button's own OnClick
+-- (running Blizzard's handler under addon taint gets the addon blocked).
+-- Instead, a transparent overlay button per slot appears only while Alt is
+-- held and catches the right-click; normal clicks never see addon code.
+
+local function overlayOnClick(self)
+	local item = self:GetParent()
+	if cdb and IsAltKeyDown() and not CursorHasItem() and not item:IsCached() then
+		onAltRightClick(item)
+	end
+end
+
+local function overlayOnEnter(self)
+	local item = self:GetParent()
+	local onEnter = item:GetScript('OnEnter')
+	if onEnter then onEnter(item) end
+end
+
+local function overlayOnLeave(self)
+	local item = self:GetParent()
+	local onLeave = item:GetScript('OnLeave')
+	if onLeave then onLeave(item) end
+end
+
+local function hookSlot(item)
 	if hookedSlots[item] then return end
 	hookedSlots[item] = true
 
-	local orig = item:GetScript('OnClick')
-	item:SetScript('OnClick', function(self, button, ...)
-		if button == 'RightButton' and IsAltKeyDown() and cdb
-			and not CursorHasItem() and not self:IsCached() then
-			onAltRightClick(self)
-			return -- swallow: default handler would use/equip the item
+	local ov = CreateFrame('Button', nil, item)
+	ov:SetAllPoints(item)
+	ov:RegisterForClicks('RightButtonUp')
+	ov:SetScript('OnClick', overlayOnClick)
+	ov:SetScript('OnEnter', overlayOnEnter) -- keep the tooltip alive under Alt
+	ov:SetScript('OnLeave', overlayOnLeave)
+	ov:Hide()
+	item.pinSellOverlay = ov
+end
+
+local function setOverlaysShown(shown)
+	for item in pairs(hookedSlots) do
+		local ov = item.pinSellOverlay
+		if ov then
+			if shown and item:IsVisible() then
+				ov:SetFrameLevel(item:GetFrameLevel() + 5)
+				ov:Show()
+			else
+				ov:Hide()
+			end
 		end
-		if orig then
-			return orig(self, button, ...)
-		end
-	end)
+	end
 end
 
 local origNew = Bagnon.ItemSlot.New
 function Bagnon.ItemSlot:New(...)
 	local item = origNew(self, ...)
-	hookClicks(item)
+	hookSlot(item)
 	updateMarker(item)
+	if IsAltKeyDown() and item.pinSellOverlay then
+		item.pinSellOverlay:SetFrameLevel(item:GetFrameLevel() + 5)
+		item.pinSellOverlay:Show()
+	end
 	return item
 end
 
@@ -380,8 +419,13 @@ watcher:RegisterEvent('ADDON_LOADED')
 watcher:RegisterEvent('PLAYER_ENTERING_WORLD')
 watcher:RegisterEvent('BAG_UPDATE')
 watcher:RegisterEvent('MERCHANT_SHOW')
-watcher:SetScript('OnEvent', function(self, event, arg1)
-	if event == 'ADDON_LOADED' then
+watcher:RegisterEvent('MODIFIER_STATE_CHANGED')
+watcher:SetScript('OnEvent', function(self, event, arg1, arg2)
+	if event == 'MODIFIER_STATE_CHANGED' then
+		if arg1 == 'LALT' or arg1 == 'RALT' then
+			setOverlaysShown(arg2 == 1)
+		end
+	elseif event == 'ADDON_LOADED' then
 		if arg1 == ADDON_NAME then
 			BagnonPinSellDB = BagnonPinSellDB or {}
 			db = BagnonPinSellDB
