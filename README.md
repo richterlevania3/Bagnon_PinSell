@@ -4,6 +4,18 @@ A **[Bagnon](https://www.wowace.com/projects/bagnon) plugin for WotLK 3.3.5a**
 that gives bag slots persistent roles, so your bag layout survives the
 auto-sort button — plus grey-item auto-selling at vendors.
 
+This repository ships the **complete, working Bagnon suite** (Bagnon 2.13.3
+and its sub-addons, unmodified) alongside the plugin, so a fresh WoW install
+is one copy-paste:
+
+| Folder | What it is |
+|---|---|
+| `Bagnon_PinSell` | This plugin (slot pinning, quest slots, auto-sell) |
+| `Bagnon` | Tuller's Bagnon 2.13.3 for 3.3.5 (unmodified) |
+| `Bagnon_Config` | Bagnon options UI |
+| `Bagnon_Forever` | Cross-character item caching |
+| `Bagnon_GuildBank`, `Bagnon_Tooltips`, `Bagnon_VoidStorage` | Stock Bagnon sub-addons |
+
 Bagnon's sort button reorganizes everything, every time. PinSell lets you
 carve out exceptions:
 
@@ -23,8 +35,9 @@ are per-character and apply to the backpack bags (0–4).
 
 ## Install
 
-Requires **Bagnon** (written against 2.13.3 for 3.3.5). Copy the
-`Bagnon_PinSell` folder into `Interface/AddOns/` and restart the client.
+Copy **all** the addon folders from this repository into `Interface/AddOns/`
+and restart the client. (If you already run Bagnon, copying just
+`Bagnon_PinSell` works too — it's written against Bagnon 2.13.3.)
 
 ## Commands
 
@@ -59,5 +72,7 @@ Azeroth); works on any 3.3.5a client running Bagnon.
 
 ## License
 
-MIT (see `LICENSE`). Bagnon itself is the work of Tuller and is not included
-in this repository.
+The `Bagnon_PinSell` plugin is MIT (see `LICENSE`). Bagnon and its
+sub-addons remain the work of Tuller and their respective contributors —
+they are included here unmodified purely for install convenience, and all
+rights stay with their authors.
