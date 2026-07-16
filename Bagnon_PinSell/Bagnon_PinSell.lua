@@ -4,9 +4,10 @@
 	- Ctrl-right-click an occupied slot: PIN the item to that slot (star marker).
 	  Bagnon's sort button never moves it, and auto-sell never touches it.
 	- Ctrl-right-click an empty slot: RESERVE it for quest items (! marker).
-	  Sort skips it (won't dump items there or take items from it).
+	  Sort skips it (won't dump items there or take items from it), and the
+	  clean-up button first pulls loose quest items INTO reserved slots.
 	- Ctrl-right-click a pinned/reserved slot again to clear it.
-	Nothing is ever moved automatically -- sorting happens only when you sort.
+	Nothing is ever moved automatically -- items move only when you sort.
 	Plus: auto-sells unpinned grey items on MERCHANT_SHOW.
 	/bps toggles auto-sell, /bps list shows slot assignments.
 --]]
@@ -107,6 +108,128 @@ if Bagnon.Sorting and Bagnon.Sorting.GetSpaces then
 			end
 		end
 		return filtered
+	end
+end
+
+
+--[[ Clean-up pulls quest items into reserved slots ]]--
+
+-- Runs only when the user clicks Bagnon's clean-up button: before the normal
+-- sort we swap loose quest items into the quest-reserved slots (evicting any
+-- non-quest squatter -- the swap drops it where the quest item was, and the
+-- sorter files it away right after). Moves are asynchronous (item locks), so
+-- a light ticker performs one swap per tick and hands off to the sorter once
+-- every reserved slot is settled.
+
+local QUEST_CLASS = select(12, GetAuctionItemClasses())
+
+local function isQuestItem(bag, slot)
+	local link = GetContainerItemLink(bag, slot)
+	if not link then return false end
+	if GetContainerItemQuestInfo then
+		local isQuest, questId = GetContainerItemQuestInfo(bag, slot)
+		if isQuest or questId then return true end
+	end
+	return QUEST_CLASS ~= nil and select(6, GetItemInfo(link)) == QUEST_CLASS
+end
+
+local function slotLocked(bag, slot)
+	local _, _, locked = GetContainerItemInfo(bag, slot)
+	return locked
+end
+
+local function anyReservedLocked()
+	for k in pairs(cdb.questSlots) do
+		local bag, slot = parseKey(k)
+		if bag and slotLocked(bag, slot) then return true end
+	end
+	return false
+end
+
+-- next (source -> reserved slot) swap that is possible right now, or nil
+local function nextQuestMove()
+	local dests = {}
+	for k in pairs(cdb.questSlots) do
+		local bag, slot = parseKey(k)
+		if bag and isBackpackBag(bag) and slot <= GetContainerNumSlots(bag)
+			and not isQuestItem(bag, slot) then
+			table.insert(dests, {bag = bag, slot = slot})
+		end
+	end
+	if #dests == 0 then return end
+	table.sort(dests, function(a, b)
+		if a.bag ~= b.bag then return a.bag < b.bag end
+		return a.slot < b.slot
+	end)
+
+	for bag = 0, NUM_BAG_SLOTS do
+		for slot = 1, GetContainerNumSlots(bag) do
+			if not isProtected(bag, slot) and isQuestItem(bag, slot)
+				and not slotLocked(bag, slot) then
+				for _, d in ipairs(dests) do
+					if not slotLocked(d.bag, d.slot) then
+						return bag, slot, d.bag, d.slot
+					end
+				end
+			end
+		end
+	end
+end
+
+if Bagnon.Sorting and Bagnon.Sorting.Start then
+	local Sort = Bagnon.Sorting
+	local origStart = Sort.Start
+
+	local placer = CreateFrame('Frame')
+	placer:Hide()
+	local tick, deadline, pendingFrame = 0, 0, nil
+
+	local function handOff()
+		placer:Hide()
+		local itemFrame = pendingFrame
+		pendingFrame = nil
+		if itemFrame then
+			origStart(Sort, itemFrame)
+		end
+	end
+
+	placer:SetScript('OnUpdate', function(self, dt)
+		tick = tick + dt
+		if tick < 0.1 then return end
+		tick = 0
+
+		if GetTime() > deadline then
+			handOff()
+			return
+		end
+
+		local sBag, sSlot, dBag, dSlot = nextQuestMove()
+		if not sBag then
+			-- nothing left to place; wait out any in-flight swap, then sort
+			if not anyReservedLocked() then
+				handOff()
+			end
+			return
+		end
+
+		ClearCursor()
+		PickupContainerItem(sBag, sSlot)
+		PickupContainerItem(dBag, dSlot)
+		ClearCursor()
+	end)
+
+	function Sort:Start(itemFrame)
+		if placer:IsShown() then
+			pendingFrame = itemFrame
+			return
+		end
+		if not cdb or not next(cdb.questSlots) or not self:CanRun() then
+			return origStart(self, itemFrame)
+		end
+		pendingFrame = itemFrame
+		tick = 0.1              -- act on the first tick
+		deadline = GetTime() + 5
+		placer:Show()
 	end
 end
 
