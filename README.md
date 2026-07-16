@@ -19,19 +19,16 @@ is one copy-paste:
 Bagnon's sort button reorganizes everything, every time. PinSell lets you
 carve out exceptions:
 
-- **Pin an item to a slot** — alt-right-click an occupied slot (star marker).
-  Auto-sort will never move it, and if the item ends up anywhere else in your
-  bags (bought more, looted, misplaced), it is automatically moved back to its
-  home slot.
-- **Reserve slots for quest items** — alt-right-click an *empty* slot
-  (**!** marker). New quest items are automatically pulled into reserved
-  slots, non-quest loot that lands there is evicted, and auto-sort leaves the
-  slots alone.
+- **Pin an item to a slot** — ctrl-right-click an occupied slot (star marker).
+  Sorting will never move it.
+- **Reserve slots for quest items** — ctrl-right-click an *empty* slot
+  (**!** marker). Sorting won't take the slot or dump items into it.
 - **Auto-sell greys** — opening a vendor sells all poor-quality items, except
   anything sitting in a pinned or reserved slot. Reports the total earned.
 
-Alt-right-click a marked slot again to clear its role. Pins and reservations
-are per-character and apply to the backpack bags (0–4).
+Ctrl-right-click a marked slot again to clear its role. Pins and reservations
+are per-character and apply to the backpack bags (0–4). PinSell never moves
+items on its own — your bags only change when you sort them.
 
 ## Install
 
@@ -51,13 +48,8 @@ and restart the client. (If you already run Bagnon, copying just
 - Bagnon's sort is fully client-side (`Bagnon/utility/sorting.lua`). PinSell
   wraps `Sorting:GetSpaces()` and filters protected slots out of the sorter's
   workspace, so they can't be used as a source *or* a destination.
-- Item returns and quest-slot filling run through an async move queue that
-  waits on server item locks, fires ~0.6 s after bag activity settles, and
-  stands down in combat — the same constraints Bagnon's own sorter obeys.
-- Quest items are detected via `GetContainerItemQuestInfo` (quest-class items
-  and quest starters).
 - Clicks are intercepted per item button (the default handler would *use* the
-  item on alt-right-click); everything hooks Bagnon from the outside, so no
+  item on ctrl-right-click); everything hooks Bagnon from the outside, so no
   Bagnon files are modified and the plugin survives Bagnon updates.
 
 Written for and tested on [Ascension WoW](https://ascension.gg) (Conquest of

@@ -1,13 +1,12 @@
 --[[
 	Bagnon_PinSell
 	Slot roles (per character, backpack bags 0-4 only):
-	- Alt-right-click an occupied slot: PIN the item to that slot (star marker).
-	  Auto-sort never moves it, and if the item is found elsewhere in your
-	  bags it gets moved back home.
-	- Alt-right-click an empty slot: RESERVE it for quest items (! marker).
-	  Auto-sort skips it, new quest items are pulled into reserved slots,
-	  and non-quest items that land there are evicted.
-	- Alt-right-click a pinned/reserved slot again to clear it.
+	- Ctrl-right-click an occupied slot: PIN the item to that slot (star marker).
+	  Bagnon's sort button never moves it, and auto-sell never touches it.
+	- Ctrl-right-click an empty slot: RESERVE it for quest items (! marker).
+	  Sort skips it (won't dump items there or take items from it).
+	- Ctrl-right-click a pinned/reserved slot again to clear it.
+	Nothing is ever moved automatically -- sorting happens only when you sort.
 	Plus: auto-sells unpinned grey items on MERCHANT_SHOW.
 	/bps toggles auto-sell, /bps list shows slot assignments.
 --]]
@@ -18,8 +17,6 @@ if not Bagnon or not Bagnon.ItemSlot then return end
 
 local db, cdb    -- account / per-character saved vars, set on ADDON_LOADED
 local hookedSlots = {}
-local moveQueue = {}
-local enforceAt, nextMoveAt
 
 local RAID_ICONS = [[Interface\TargetingFrame\UI-RaidTargetingIcons]]
 local QUEST_BANG = TEXTURE_ITEM_QUEST_BANG or [[Interface\ContainerFrame\UI-Icon-QuestBang]]
@@ -49,24 +46,10 @@ local function slotItemId(bag, slot)
 	return link and tonumber(string.match(link, 'item:(%d+)')) or nil
 end
 
-local function slotLocked(bag, slot)
-	local _, _, locked = GetContainerItemInfo(bag, slot)
-	return locked
-end
-
 local function isProtected(bag, slot)
 	if not cdb then return false end
 	local k = key(bag, slot)
 	return cdb.pins[k] ~= nil or cdb.questSlots[k] == true
-end
-
-local function isQuestItemAt(bag, slot)
-	if not GetContainerItemLink(bag, slot) then return false end
-	if GetContainerItemQuestInfo then
-		local isQuest, questID = GetContainerItemQuestInfo(bag, slot)
-		return isQuest and true or (questID and true) or false
-	end
-	return false
 end
 
 
@@ -108,148 +91,7 @@ local function updateAllMarkers()
 end
 
 
---[[ Move engine (async, lock-aware) ]]--
-
-local driver = CreateFrame('Frame')
-driver:Hide()
-
-local function wake()
-	driver:Show()
-end
-
-local function scheduleEnforce()
-	enforceAt = GetTime() + 0.6
-	wake()
-end
-
-local function queueMove(sBag, sSlot, dBag, dSlot, itemID)
-	table.insert(moveQueue, { sb = sBag, ss = sSlot, db = dBag, ds = dSlot, id = itemID })
-	wake()
-end
-
-local function processQueue()
-	local m = moveQueue[1]
-	if not m then return end
-
-	if InCombatLockdown() or UnitIsDead('player') then
-		table.wipe(moveQueue)
-		return
-	end
-
-	-- source changed since planning? drop this move, re-plan on next enforce
-	if slotItemId(m.sb, m.ss) ~= m.id then
-		table.remove(moveQueue, 1)
-		scheduleEnforce()
-		return
-	end
-
-	-- wait for pending server acks
-	if slotLocked(m.sb, m.ss) or slotLocked(m.db, m.ds) then
-		return
-	end
-
-	ClearCursor()
-	PickupContainerItem(m.sb, m.ss)
-	PickupContainerItem(m.db, m.ds)
-	ClearCursor() -- returns any displaced item to the source slot (swap)
-
-	table.remove(moveQueue, 1)
-end
-
-
---[[ Enforcement: pinned items home, quest items into reserved slots ]]--
-
-local function findItemAt(itemID)
-	for bag = 0, NUM_BAG_SLOTS do
-		for slot = 1, GetContainerNumSlots(bag) do
-			if not isProtected(bag, slot) and slotItemId(bag, slot) == itemID then
-				return bag, slot
-			end
-		end
-	end
-end
-
-local function findEmptyUnprotected()
-	for bag = 0, NUM_BAG_SLOTS do
-		for slot = 1, GetContainerNumSlots(bag) do
-			if not isProtected(bag, slot) and not GetContainerItemLink(bag, slot) then
-				return bag, slot
-			end
-		end
-	end
-end
-
-local function enforce()
-	if not cdb or InCombatLockdown() or UnitIsDead('player') then return end
-	if #moveQueue > 0 then return end
-
-	-- 1) bring pinned items back to their home slots
-	for k, itemID in pairs(cdb.pins) do
-		local bag, slot = parseKey(k)
-		if slotItemId(bag, slot) ~= itemID then
-			local sBag, sSlot = findItemAt(itemID)
-			if sBag then
-				queueMove(sBag, sSlot, bag, slot, itemID)
-			end
-		end
-	end
-
-	-- 2) evict non-quest items squatting in reserved slots
-	for k in pairs(cdb.questSlots) do
-		local bag, slot = parseKey(k)
-		local id = slotItemId(bag, slot)
-		if id and not isQuestItemAt(bag, slot) then
-			local eBag, eSlot = findEmptyUnprotected()
-			if eBag then
-				queueMove(bag, slot, eBag, eSlot, id)
-			end
-		end
-	end
-
-	-- 3) pull loose quest items into empty reserved slots
-	local emptyReserved = {}
-	for k in pairs(cdb.questSlots) do
-		local bag, slot = parseKey(k)
-		if not GetContainerItemLink(bag, slot) then
-			table.insert(emptyReserved, { bag = bag, slot = slot })
-		end
-	end
-
-	if #emptyReserved > 0 then
-		local n = 1
-		for bag = 0, NUM_BAG_SLOTS do
-			for slot = 1, GetContainerNumSlots(bag) do
-				if n > #emptyReserved then break end
-				if not isProtected(bag, slot) and isQuestItemAt(bag, slot) then
-					local dest = emptyReserved[n]
-					queueMove(bag, slot, dest.bag, dest.slot, slotItemId(bag, slot))
-					n = n + 1
-				end
-			end
-		end
-	end
-end
-
-driver:SetScript('OnUpdate', function()
-	local now = GetTime()
-
-	if #moveQueue > 0 then
-		if now >= (nextMoveAt or 0) then
-			nextMoveAt = now + 0.15
-			processQueue()
-		end
-	elseif enforceAt then
-		if now >= enforceAt then
-			enforceAt = nil
-			enforce()
-		end
-	else
-		driver:Hide()
-	end
-end)
-
-
---[[ Keep auto-sort away from pinned/reserved slots ]]--
+--[[ Keep sorting away from pinned/reserved slots ]]--
 
 if Bagnon.Sorting and Bagnon.Sorting.GetSpaces then
 	local origGetSpaces = Bagnon.Sorting.GetSpaces
@@ -269,13 +111,13 @@ if Bagnon.Sorting and Bagnon.Sorting.GetSpaces then
 end
 
 
---[[ Alt-right-click: pin / reserve / clear ]]--
+--[[ Ctrl-right-click: pin / reserve / clear ]]--
 
 local function slotDesc(bag, slot)
 	return 'bag ' .. bag .. ' slot ' .. slot
 end
 
-local function onAltRightClick(item)
+local function onCtrlRightClick(item)
 	local bag, slot = item:GetBag(), item:GetID()
 	if not isBackpackBag(bag) then
 		say('pinning only works in backpack bags')
@@ -302,18 +144,17 @@ local function onAltRightClick(item)
 	end
 
 	updateAllMarkers()
-	scheduleEnforce()
 end
 
 -- Taint-safe click capture: we never touch the slot button's own OnClick
 -- (running Blizzard's handler under addon taint gets the addon blocked).
--- Instead, a transparent overlay button per slot appears only while Alt is
+-- Instead, a transparent overlay button per slot appears only while Ctrl is
 -- held and catches the right-click; normal clicks never see addon code.
 
 local function overlayOnClick(self)
 	local item = self:GetParent()
-	if cdb and IsAltKeyDown() and not CursorHasItem() and not item:IsCached() then
-		onAltRightClick(item)
+	if cdb and IsControlKeyDown() and not CursorHasItem() and not item:IsCached() then
+		onCtrlRightClick(item)
 	end
 end
 
@@ -337,7 +178,7 @@ local function hookSlot(item)
 	ov:SetAllPoints(item)
 	ov:RegisterForClicks('RightButtonUp')
 	ov:SetScript('OnClick', overlayOnClick)
-	ov:SetScript('OnEnter', overlayOnEnter) -- keep the tooltip alive under Alt
+	ov:SetScript('OnEnter', overlayOnEnter) -- keep the tooltip alive under Ctrl
 	ov:SetScript('OnLeave', overlayOnLeave)
 	ov:Hide()
 	item.pinSellOverlay = ov
@@ -362,7 +203,7 @@ function Bagnon.ItemSlot:New(...)
 	local item = origNew(self, ...)
 	hookSlot(item)
 	updateMarker(item)
-	if IsAltKeyDown() and item.pinSellOverlay then
+	if IsControlKeyDown() and item.pinSellOverlay then
 		item.pinSellOverlay:SetFrameLevel(item:GetFrameLevel() + 5)
 		item.pinSellOverlay:Show()
 	end
@@ -416,13 +257,11 @@ end
 
 local watcher = CreateFrame('Frame')
 watcher:RegisterEvent('ADDON_LOADED')
-watcher:RegisterEvent('PLAYER_ENTERING_WORLD')
-watcher:RegisterEvent('BAG_UPDATE')
 watcher:RegisterEvent('MERCHANT_SHOW')
 watcher:RegisterEvent('MODIFIER_STATE_CHANGED')
 watcher:SetScript('OnEvent', function(self, event, arg1, arg2)
 	if event == 'MODIFIER_STATE_CHANGED' then
-		if arg1 == 'LALT' or arg1 == 'RALT' then
+		if arg1 == 'LCTRL' or arg1 == 'RCTRL' then
 			setOverlaysShown(arg2 == 1)
 		end
 	elseif event == 'ADDON_LOADED' then
@@ -436,12 +275,6 @@ watcher:SetScript('OnEvent', function(self, event, arg1, arg2)
 			cdb = BagnonPinSellCharDB
 
 			self:UnregisterEvent('ADDON_LOADED')
-		end
-	elseif event == 'PLAYER_ENTERING_WORLD' then
-		scheduleEnforce()
-	elseif event == 'BAG_UPDATE' then
-		if cdb and (next(cdb.pins) or next(cdb.questSlots)) then
-			scheduleEnforce()
 		end
 	elseif event == 'MERCHANT_SHOW' then
 		if db and db.autosell ~= false then
