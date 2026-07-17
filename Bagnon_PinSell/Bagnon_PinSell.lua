@@ -112,6 +112,62 @@ if Bagnon.Sorting and Bagnon.Sorting.GetSpaces then
 end
 
 
+--[[ Sort loop fuse ]]--
+
+-- Ascension has custom items whose reported stack size disagrees with the
+-- server: two partial stacks that refuse to merge. Bagnon's sorter retries
+-- the merge forever (the swap puts them right back), so the sort never ends.
+-- Detect a repeating bag state between runs and stop the sort instead.
+
+if Bagnon.Sorting and Bagnon.Sorting.Run and Bagnon.Sorting.Stop then
+	local Sort = Bagnon.Sorting
+	local history, runs = {}, 0
+
+	-- nil while any visible slot is still lock-pending (moves in flight)
+	local function fingerprint(itemFrame)
+		local parts = {}
+		for _, bag in itemFrame:GetVisibleBags() do
+			for slot = 1, GetContainerNumSlots(bag) do
+				local link = GetContainerItemLink(bag, slot)
+				if link then
+					local _, count, locked = GetContainerItemInfo(bag, slot)
+					if locked then return nil end
+					table.insert(parts, bag .. '.' .. slot .. '='
+						.. (string.match(link, 'item:(%d+)') or '?') .. 'x' .. (count or 1))
+				end
+			end
+		end
+		return table.concat(parts, ';')
+	end
+
+	local origRun = Sort.Run
+	function Sort:Run(...)
+		runs = runs + 1
+		if self.itemFrame then
+			local fp = fingerprint(self.itemFrame)
+			if fp then
+				history[fp] = (history[fp] or 0) + 1
+				if history[fp] >= 3 then
+					say('sort stopped: some items refuse to stack, left as they are')
+					return self:Stop()
+				end
+			end
+		end
+		if runs > 200 then
+			say('sort stopped: not converging, left as is')
+			return self:Stop()
+		end
+		return origRun(self, ...)
+	end
+
+	local origStop = Sort.Stop
+	function Sort:Stop(...)
+		history, runs = {}, 0
+		return origStop(self, ...)
+	end
+end
+
+
 --[[ Clean-up pulls quest items into reserved slots ]]--
 
 -- Runs only when the user clicks Bagnon's clean-up button: before the normal

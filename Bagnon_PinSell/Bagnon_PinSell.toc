@@ -2,7 +2,7 @@
 ## Title: Bagnon PinSell
 ## Notes: Ctrl-right-click pins items to slots / reserves empty slots for quest items; both survive sorting, and clean-up pulls quest items into reserved slots. Auto-sells greys at vendors.
 ## Author: richterlevania3
-## Version: 3.1
+## Version: 3.2
 ## Dependencies: Bagnon
 ## SavedVariables: BagnonPinSellDB
 ## SavedVariablesPerCharacter: BagnonPinSellCharDB
