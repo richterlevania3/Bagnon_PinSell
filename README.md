@@ -28,7 +28,19 @@ carve out exceptions:
 
 Ctrl-right-click a marked slot again to clear its role. Pins and reservations
 are per-character and apply to the backpack bags (0–4). PinSell never moves
-items on its own — your bags only change when you sort them.
+items on its own — your bags only change when *you* click clean-up. When you
+do, before the normal sort runs:
+
+- loose quest items are pulled **into** your quest-reserved slots (evicting
+  any non-quest squatter by swap);
+- with no quest items left to place, non-quest items still sitting in
+  reserved slots are moved **out** to a free slot (they stay put if your bags
+  are full).
+
+PinSell also guards against a stock Bagnon sorter bug: items whose reported
+stack size disagrees with the server (common with custom-server items) make
+the sort loop forever. PinSell detects the repeating bag state and stops the
+sort with a chat notice instead.
 
 ## Install
 
