@@ -4,8 +4,9 @@
 	- Ctrl-right-click an occupied slot: PIN the item to that slot (star marker).
 	  Bagnon's sort button never moves it, and auto-sell never touches it.
 	- Ctrl-right-click an empty slot: RESERVE it for quest items (! marker).
-	  Sort skips it (won't dump items there or take items from it), and the
-	  clean-up button first pulls loose quest items INTO reserved slots.
+	  Sort skips it (won't dump items there or take items from it); the
+	  clean-up button first pulls loose quest items INTO reserved slots and
+	  moves non-quest squatters OUT of them (when a free slot exists).
 	- Ctrl-right-click a pinned/reserved slot again to clear it.
 	Nothing is ever moved automatically -- items move only when you sort.
 	Plus: auto-sells unpinned grey items on MERCHANT_SHOW.
@@ -202,7 +203,10 @@ local function anyReservedLocked()
 	return false
 end
 
--- next (source -> reserved slot) swap that is possible right now, or nil
+-- next placement move that is possible right now, or nil. Two kinds:
+-- 1) a loose quest item swaps into a reserved slot (evicting any squatter);
+-- 2) with no quest items left to place, a non-quest squatter still sitting in
+--    a reserved slot is moved out to a free unprotected slot (if bags allow).
 local function nextQuestMove()
 	local dests = {}
 	for k in pairs(cdb.questSlots) do
@@ -218,16 +222,34 @@ local function nextQuestMove()
 		return a.slot < b.slot
 	end)
 
+	local questPending = false
 	for bag = 0, NUM_BAG_SLOTS do
 		for slot = 1, GetContainerNumSlots(bag) do
-			if not isProtected(bag, slot) and isQuestItem(bag, slot)
-				and not slotLocked(bag, slot) then
-				for _, d in ipairs(dests) do
-					if not slotLocked(d.bag, d.slot) then
-						return bag, slot, d.bag, d.slot
+			if not isProtected(bag, slot) and isQuestItem(bag, slot) then
+				questPending = true
+				if not slotLocked(bag, slot) then
+					for _, d in ipairs(dests) do
+						if not slotLocked(d.bag, d.slot) then
+							return bag, slot, d.bag, d.slot
+						end
 					end
 				end
 			end
+		end
+	end
+	if questPending then return end   -- quest items still in flight; don't evict yet
+
+	for _, d in ipairs(dests) do
+		if GetContainerItemLink(d.bag, d.slot) and not slotLocked(d.bag, d.slot) then
+			for bag = 0, NUM_BAG_SLOTS do
+				for slot = 1, GetContainerNumSlots(bag) do
+					if not GetContainerItemLink(bag, slot) and not isProtected(bag, slot)
+						and not slotLocked(bag, slot) then
+						return d.bag, d.slot, bag, slot
+					end
+				end
+			end
+			return   -- no free slot anywhere; squatters stay put
 		end
 	end
 end
